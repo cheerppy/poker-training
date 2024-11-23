@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <title>Poker練習</title>
+</head>
+<body>
+  <div id="app">
+    <section>
+      <button @click="deal">deal</button>
+      <button @click="flop">flop</button>
+      <button @click="showAnswer">answer</button>
+    </section>
+    <section id="board">
+      <div class="wrapper">
+        <div v-for="card in pocketCards" class="card" :style="{color: card.color}">
+          <span>{{card.suit.description}}</span>
+          <span style="font-size: 30px;">{{card.number}}</span>
+        </div>
+      </div>
+    </section>
+    <section id="open-raise" v-show="pocketCards.length">
+      <div class="wrapper" v-show="!boardCards.length && shownAnswer">
+        Level {{level}}
+      </div>
+    </section>
+    <section id="board">
+      <div class="wrapper">
+        <div v-for="card in boardCards" class="card" :style="{color: card.color}">
+          <span>{{card.suit.description}}</span>
+          <span style="font-size: 30px;">{{card.number}}</span>
+        </div>
+      </div>
+    </section>
+    <section id="cb" v-show="boardCards.length">
+      <div class="wrapper" v-show="shownAnswer">
+        <h3>SRP CB size and frequency</h3>
+        <p v-if="monotoneBoard">monotoneBoard: 0% bet even if flopped a flash</p>
+        <p v-else-if="pairBoard">pairBoard: bet 0.33 POT always</p>
+        <p v-else-if="connectBoard">connectBoard: bet 0.33 POT always</p>
+        <p v-else-if="(AHighBoard) && wetBoard">
+          AHigh-wetBoard: bet 1.25 POT in 30%<br>
+          ただし、セット、ツーペアは90%ベット<br>
+          セカンドペア、サードペアは90%チェック<br>
+          それ以外は50%の頻度でベット
+        </p>
+        <p v-else-if="(AHighBoard) && !wetBoard">
+          AHigh-dryBoard: bet 0.33 POT in 50%
+        </p>
+        <p v-else-if="(KQHighBoard) && wetBoard">
+          KQHigh-wetBoard: bet 0.75 POT in 50%<br>
+          ただし、セット、ツーペアは90%ベット<br>
+          セカンドペア、サードペアは90%チェック<br>
+          それ以外は50%の頻度でベット
+        </p>
+        <p v-else-if="(KQHighBoard) && !wetBoard">KQHigh-dryBoard: bet 0.33 POT always</p>
+        <p v-else>none: bet 0.75 POT in 50%</p>
+        <!-- <p v-if="twoToneBoard">twoToneBoard</p> -->
+      </div>
+    </section>
+  </div>
+</body>
+
+<script>
+  const { createApp, ref } = Vue;
+  const A = 1, T = 10, J = 11, Q = 12, K = 13;
+
+  class Card {
+    constructor(suit, number) {
+      if (!Card.suits.includes(suit)) throw new Error(`${suit} is not a suit.`);
+      this.suit = suit;
+      this.number = {
+        is(num){ return num.valueOf() === number.valueOf();},
+        valueOf(){ return number },
+        toString(){
+          switch (number) {
+            case 1: return "A";
+            case 10: return "T";
+            case 11: return "J";
+            case 12: return "Q";
+            case 13: return "K";
+            default: return String(number);
+          }
+        }
+      };
+    }
+    
+    static Suit = class {
+      static SPADE = Symbol("s");
+      static HEART = Symbol("h");
+      static DIAMOND = Symbol("d");
+      static CLUB = Symbol("c");
+    }
+    static suits = [Card.Suit.SPADE, Card.Suit.HEART, Card.Suit.DIAMOND, Card.Suit.CLUB];
+    static random(){
+      const suit = Card.suits[~~(4 * Math.random())];
+      const number = ~~(13 * Math.random()) + 1;
+      return new Card(suit, number);
+    }
+    get [Symbol.toStringTag](){ return `${this.suit.description}${this.number.toString()}` }
+    get color(){
+      switch (this.suit) {
+        case Card.Suit.SPADE: return "black";
+        case Card.Suit.HEART: return "red";
+        case Card.Suit.DIAMOND: return "blue";
+        case Card.Suit.CLUB: return "green";
+      }
+    }
+    is(card){
+      return card.toString() === this.toString();
+    }
+  }
+
+  createApp({
+    data() {
+      return {
+        pocketCards: [],
+        boardCards: [],
+        shownAnswer: false,
+      }
+    },
+    computed: {
+      sortedPocketCards(){
+        return this.pocketCards.toSorted((a,b) => {
+          [a,b] = [a,b].map(card => +card.number === A ? 14 : +card.number)
+          return b - a;
+        });
+      },
+      sortedBoardCards(){
+        return this.boardCards.toSorted((a,b) => {
+          [a,b] = [a,b].map(card => +card.number === A ? 14 : +card.number)
+          return b - a;
+        });
+      },
+      pairBoard(){ 
+        return Array.from(new Set(
+          this.boardCards.map(card => +card.number)
+        )).length <= 2;
+      },
+      connectBoard(){ 
+        if(this.pairBoard){ return false; }
+        if(this.AHighBoard){ return this.sortedBoardCards[1].number <= 5; }
+        return this.sortedBoardCards[0].number - this.sortedBoardCards[2].number < 5;
+      },
+      monotoneBoard(){ 
+        return Array.from(new Set(
+          this.boardCards.map(card => card.suit)
+        )).length === 1;
+      },
+      twoToneBoard(){ 
+        return Array.from(new Set(
+          this.boardCards.map(card => card.suit)
+        )).length === 2;
+      },
+      wetBoard(){
+        const sorted = this.sortedBoardCards.map(card => +card.number === A ? 14 : +card.number);
+        console.log(sorted, sorted[0] - sorted[1]);
+        return sorted[0] - sorted[1] < 5
+      },
+      AHighBoard(){
+        return this.sortedBoardCards[0]?.number.is(A);
+      },
+      KQHighBoard(){
+        return +this.sortedBoardCards[0]?.number >= 12;
+      },
+      level(){
+        if(!this.pocketCards.length) return;
+        const [high, low] = this.sortedPocketCards.map(card => card.number);
+        if(high.is(low)) {
+          if(high.is(A) || high.is(K)) return 6;
+          if(high >= 9) return 5;
+          if(high >= 7) return 4;
+          if(high >= 5) return 3;
+          return 2;
+        }
+        if(this.sortedPocketCards[0].suit === this.sortedPocketCards[1].suit){
+          if(high.is(A)){
+            if(low.is(K)) return 6;
+            if(low >= T) return 5;
+            return 3;
+          }
+          if(high.is(K)){
+            if(low.is(9)) return 3;
+            if(low < 9) return 1;
+            return 6 - (high - low)
+          }
+          if(high.is(Q) || high.is(J)){
+            if(low.is(9)) return 2;
+            if(low > 9) return 5 - (high - low);
+            if(high + low >= 18) return 1;
+            return 0;
+          }
+          if(high.is(T)){
+            if(high - low === 1) return 3;
+            if(high - low === 2) return 2;
+            return 0;
+          }
+          if(high.is(9)){
+            if(high - low === 1) return 2;
+            if(high - low === 2) return 1;
+            return 0;
+          }
+          if(high >= 6){
+            if(high - low === 1) return 1;
+            return 0;
+          }
+          return 0;
+        } else { // off-suit
+          if(high.is(A)){
+            if(low.is(7)) return 1;
+            if(low > 7) return 7 - (14 - low);
+            return 0;
+          }
+          if(high.is(K)){
+            if(low.is(9)) return 1;
+            if(low > 9) return 5 - (high - low);
+            return 0;
+          }
+          if(high.is(Q) || high.is(J) || high.is(T)){
+            if(low.is(9)) return 1;
+            if(low > 9) return 3 - (high - low);
+            return 0;
+          }
+          if(high.is(T)){
+            if(high - low === 1) return 3;
+            if(high - low === 2) return 2;
+            return 0;
+          }
+          if(high.is(9)){
+            if(high - low === 1) return 2;
+            if(high - low === 2) return 1;
+            return 0;
+          }
+          return 0;
+        }
+      }
+    },
+    // created(){ this.flop(); },
+    methods: {
+      deal(){
+        this.shownAnswer = false;
+        this.pocketCards.length = 0;
+        this.boardCards.length = 0;
+        while (this.pocketCards.length < 2) {
+          const newCard = Card.random();
+          if(this.pocketCards.some(card => card.is(newCard))) continue;
+          this.pocketCards.push(newCard);
+        }
+      },
+      flop(){
+        this.shownAnswer = false;
+        this.boardCards.length = 0;
+        while (this.boardCards.length < 3) {
+          const newCard = Card.random();
+          if(this.pocketCards.some(card => card.is(newCard))) continue;
+          if(this.boardCards.some(card => card.is(newCard))) continue;
+          this.boardCards.push(newCard);
+        }
+      },
+      showAnswer(){
+        this.shownAnswer = true;
+      },
+    }
+  }).mount('#app');
+</script>
+
+<style>
+  section {
+    margin-block: 10px;
+  }
+  #board .wrapper {
+    display: flex;
+    gap: 10px;
+  }
+  button {
+    font-size: 24px;
+    height: 40px;
+    line-height: 40px;
+    padding-inline: 10px;
+    margin: 6px;
+  }
+  .card {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    width: 40px;
+    height: 50px;
+    line-height: 50px;
+    border: 1px outset;
+  }
+</style>
+</html>
